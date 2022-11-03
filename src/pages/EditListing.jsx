@@ -6,22 +6,23 @@ import {
   uploadBytesResumable,
   getDownloadURL,
 } from 'firebase/storage'
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
+import { doc, updateDoc, getDoc, serverTimestamp } from 'firebase/firestore'
 import { db } from '../firebase.config'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'react-toastify'
 import { v4 as uuidv4 } from 'uuid'
 import Spinner from '../components/Spinner'
 
- function CreateListing() {
-  const [loading, setLoading] = useState(false);
+function EditListing() {
   // eslint-disable-next-line
-  const [geolocationEnabled, setGeolocationEnabled] = useState(false);
+  const [geolocationEnabled, setGeolocationEnabled] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [listing, setListing] = useState(false)
   const [formData, setFormData] = useState({
     type: 'rent',
     name: '',
     bedrooms: 1,
-    bathrooms:1,
+    bathrooms: 1,
     parking: false,
     furnished: false,
     address: '',
@@ -30,8 +31,8 @@ import Spinner from '../components/Spinner'
     discountedPrice: 0,
     images: {},
     latitude: 0,
-    longitude: 0
-  });
+    longitude: 0,
+  })
 
   const {
     type,
@@ -49,25 +50,54 @@ import Spinner from '../components/Spinner'
     longitude,
   } = formData
 
-
-  const auth =getAuth()
+  const auth = getAuth()
   const navigate = useNavigate()
-  const isMounted =useRef(true)
+  const params = useParams()
+  const isMounted = useRef(true)
+
+  // Redirect if listing is not user's
   useEffect(() => {
-    if(isMounted){
-      onAuthStateChanged(auth, (user)=>{
-        if(user){
-          setFormData({...formData, userRef:user.uid})
-        }else{
+    if (listing && listing.userRef !== auth.currentUser.uid) {
+      toast.error('You can not edit that listing')
+      navigate('/')
+    }
+  })
+
+  // Fetch listing to edit
+  useEffect(() => {
+    setLoading(true)
+    const fetchListing = async () => {
+      const docRef = doc(db, 'listings', params.listingId)
+      const docSnap = await getDoc(docRef)
+      if (docSnap.exists()) {
+        setListing(docSnap.data())
+        setFormData({ ...docSnap.data(), address: docSnap.data().location })
+        setLoading(false)
+      } else {
+        navigate('/')
+        toast.error('Listing does not exist')
+      }
+    }
+
+    fetchListing()
+  }, [params.listingId, navigate])
+
+  // Sets userRef to logged in user
+  useEffect(() => {
+    if (isMounted) {
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          setFormData({ ...formData, userRef: user.uid })
+        } else {
           navigate('/sign-in')
         }
       })
     }
-  
+
     return () => {
-      isMounted.current=false
+      isMounted.current = false
     }
-    // esint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMounted])
 
   const onSubmit = async (e) => {
@@ -92,8 +122,7 @@ import Spinner from '../components/Spinner'
 
     if (geolocationEnabled) {
       const response = await fetch(
-      //  `https://maps.googleapis.com/maps/api/geocode/json?address=1600+Amphitheatre+Parkway,+Mountain+View,+CA&key=AIzaSyBUwYzREnOhmkucyDboM3kF3VgxTVtrx4o`
-       `https://maps.googleapis.com/maps/api/geocode/json?address=${address}&key=AIzaSyBUwYzREnOhmkucyDboM3kF3VgxTVtrx4o`
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${address}&key=${process.env.REACT_APP_GEOCODE_API_KEY}`
       )
 
       const data = await response.json()
@@ -106,14 +135,12 @@ import Spinner from '../components/Spinner'
           ? undefined
           : data.results[0]?.formatted_address
 
-          console.log(data)
       if (location === undefined || location.includes('undefined')) {
         setLoading(false)
         toast.error('Please enter a correct address')
         return
       }
     } else {
-      console.log(latitude)
       geolocation.lat = latitude
       geolocation.lng = longitude
     }
@@ -146,14 +173,12 @@ import Spinner from '../components/Spinner'
             }
           },
           (error) => {
-            console.log(error)
             reject(error)
           },
           () => {
             // Handle successful uploads on complete
             // For instance, get the download URL: https://firebasestorage.googleapis.com/...
             getDownloadURL(uploadTask.snapshot.ref).then((downloadURL) => {
-              console.log(downloadURL)
               resolve(downloadURL)
             })
           }
@@ -161,7 +186,7 @@ import Spinner from '../components/Spinner'
       })
     }
 
-    const imageUrls = await Promise.all(
+    const imgUrls = await Promise.all(
       [...images].map((image) => storeImage(image))
     ).catch(() => {
       setLoading(false)
@@ -171,7 +196,7 @@ import Spinner from '../components/Spinner'
 
     const formDataCopy = {
       ...formData,
-      imageUrls,
+      imgUrls,
       geolocation,
       timestamp: serverTimestamp(),
     }
@@ -181,7 +206,9 @@ import Spinner from '../components/Spinner'
     delete formDataCopy.address
     !formDataCopy.offer && delete formDataCopy.discountedPrice
 
-    const docRef = await addDoc(collection(db, 'listings'), formDataCopy)
+    // Update listing
+    const docRef = doc(db, 'listings', params.listingId)
+    await updateDoc(docRef, formDataCopy)
     setLoading(false)
     toast.success('Listing saved')
     navigate(`/category/${formDataCopy.type}/${docRef.id}`)
@@ -217,13 +244,11 @@ import Spinner from '../components/Spinner'
   if (loading) {
     return <Spinner />
   }
-  
-  
 
   return (
     <div className='profile'>
       <header>
-        <p className='pageHeader'>Create a Listing</p>
+        <p className='pageHeader'>Edit Listing</p>
       </header>
 
       <main>
@@ -450,7 +475,7 @@ import Spinner from '../components/Spinner'
             required
           />
           <button type='submit' className='primaryButton createListingButton'>
-            Create Listing
+            Edit Listing
           </button>
         </form>
       </main>
@@ -458,4 +483,4 @@ import Spinner from '../components/Spinner'
   )
 }
 
-export default CreateListing
+export default EditListing
